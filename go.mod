@@ -1,4 +1,4 @@
-module tgmedia
+module github.com/kittenbark/tgmedia
 
 go 1.24
 
