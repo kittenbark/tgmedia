@@ -1,6 +1,7 @@
 package tgvideo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,8 +36,12 @@ func Send(ctx context.Context, chatId int64, filename string, opts ...*tg.OptSen
 		"-vframes", "1",
 		thumbnail.Name(),
 	)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	thumbnailCmd.Stdout = &stdout
+	thumbnailCmd.Stderr = &stderr
 	if err := thumbnailCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to generate thumbnail: %w", err)
+		return nil, fmt.Errorf("failed to generate thumbnail: %w (stdout: %s, stderr: %s)", err, stdout.String(), stderr.String())
 	}
 
 	meta, err := getFileMetadata(filename)
@@ -74,8 +79,12 @@ func SendH264(ctx context.Context, chatId int64, filename string, opts ...*tg.Op
 		"-strict", "experimental",
 		converted.Name(),
 	)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	convertCmd.Stdout = &stdout
+	convertCmd.Stderr = &stderr
 	if err := convertCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to convert video to H264: %w", err)
+		return nil, fmt.Errorf("failed to convert video to H264: %w (stdout: %s, stderr: %s)", err, stdout.String(), stderr.String())
 	}
 
 	return Send(ctx, chatId, converted.Name(), opts...)
