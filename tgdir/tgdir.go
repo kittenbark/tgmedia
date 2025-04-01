@@ -48,6 +48,7 @@ func SendDocumentsVerbose(
 			return nil
 		}
 
+		path = filepath.Join(dir, path)
 		switch filepath.Ext(path) {
 		case ".mp4", ".mov":
 			msg, err := tgvideo.Send(ctx, chatId, path, optVideo)
