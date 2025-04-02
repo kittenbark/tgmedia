@@ -30,9 +30,10 @@ func Send(ctx context.Context, chatId int64, filename string, opts ...*tg.OptSen
 
 	thumbnailCmd := exec.Command(
 		Ffmpeg,
-		"-y",
-		"-i", filename,
-		"-ss", "00:00:02",
+		"-y", "-i", filename,
+		"-c:v", "mjpeg",
+		"-pix_fmt", "yuvj420p",
+		"-q:v", "2",
 		"-vframes", "1",
 		thumbnail.Name(),
 	)
