@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 type Opt = tg.OptSendVideo
@@ -86,6 +87,85 @@ func SendDocumentsVerbose(
 	return result, err
 }
 
+func SendGrouped(ctx context.Context, chatId int64, dir string, opts ...*Opt) ([]*tg.Message, error) {
+	optMediaGroup := optsToMediaGroup(opts)
+	optDocument := optsToDocs(opts)
+
+	result := []*tg.Message{}
+	albumBuff := tg.Album{}
+	cleanups := []func(){}
+	defer func() {
+		wg := sync.WaitGroup{}
+		for _, cleanup := range cleanups {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cleanup()
+			}()
+		}
+		wg.Wait()
+	}()
+
+	err := fs.WalkDir(os.DirFS(dir), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		if len(albumBuff) == 10 {
+			messages, err := tg.SendMediaGroup(ctx, chatId, albumBuff, optMediaGroup)
+			if err != nil {
+				return err
+			}
+			result = append(result, messages...)
+			albumBuff = tg.Album{}
+		}
+
+		path = filepath.Join(dir, path)
+		switch filepath.Ext(path) {
+		case ".mp4", ".mov":
+			vid, cleanup, err := tgvideo.New(path)
+			if err != nil {
+				return fmt.Errorf("failed to create video %s: %w", path, err)
+			}
+			cleanups = append(cleanups, cleanup)
+			albumBuff = append(albumBuff, vid)
+
+		case ".webm":
+			vid, cleanup, err := tgvideo.NewH264(path)
+			if err != nil {
+				return fmt.Errorf("failed to create video %s: %w", path, err)
+			}
+			cleanups = append(cleanups, cleanup)
+			albumBuff = append(albumBuff, vid)
+
+		case ".png", ".jpg", ".jpeg":
+			albumBuff = append(albumBuff, &tg.Photo{Media: tg.FromDisk(path)})
+
+		default:
+			msg, err := tg.SendDocument(ctx, chatId, tg.FromDisk(path), optDocument)
+			if err != nil {
+				return fmt.Errorf("send document %s: %w", path, err)
+			}
+			result = append(result, msg)
+		}
+
+		return nil
+	})
+
+	if len(albumBuff) > 0 {
+		messages, err := tg.SendMediaGroup(ctx, chatId, albumBuff, optMediaGroup)
+		if err != nil {
+			return result, err
+		}
+		result = append(result, messages...)
+	}
+
+	return result, err
+}
+
 func optsToPhoto(opts []*Opt) *tg.OptSendPhoto {
 	if len(opts) == 0 {
 		return &tg.OptSendPhoto{}
@@ -131,5 +211,19 @@ func optsToDocs(opts []*Opt) *tg.OptSendDocument {
 		MessageEffectId:      opts[0].MessageEffectId,
 		ReplyParameters:      opts[0].ReplyParameters,
 		ReplyMarkup:          opts[0].ReplyMarkup,
+	}
+}
+func optsToMediaGroup(opts []*Opt) *tg.OptSendMediaGroup {
+	if len(opts) == 0 {
+		return &tg.OptSendMediaGroup{}
+	}
+	return &tg.OptSendMediaGroup{
+		BusinessConnectionId: opts[0].BusinessConnectionId,
+		MessageThreadId:      opts[0].MessageThreadId,
+		DisableNotification:  opts[0].DisableNotification,
+		ProtectContent:       opts[0].ProtectContent,
+		AllowPaidBroadcast:   opts[0].AllowPaidBroadcast,
+		MessageEffectId:      opts[0].MessageEffectId,
+		ReplyParameters:      opts[0].ReplyParameters,
 	}
 }

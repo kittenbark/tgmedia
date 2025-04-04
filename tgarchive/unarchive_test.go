@@ -2,13 +2,12 @@ package tgarchive
 
 import (
 	"fmt"
-	"github.com/kittenbark/tg"
 	"github.com/kittenbark/tgmedia/tgdir"
 	"testing"
 )
 
 func TestSendUnpacked(t *testing.T) {
-	bot := tg.NewFromEnv().Scheduler()
+	t.Parallel()
 
 	for _, filename := range []string{"archive.tar", "archive.tar.gz", "archive.zip"} {
 		t.Run(fmt.Sprintf("unpacked_%s", filename), func(t *testing.T) {

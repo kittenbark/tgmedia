@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -19,30 +20,17 @@ var (
 )
 
 func Send(ctx context.Context, chatId int64, filename string, opts ...*tg.OptSendVideo) (*tg.Message, error) {
-	thumbnail, err := os.CreateTemp("", "kittenbark_tgmedia_*.jpg")
+	thumbnailFile, err := os.CreateTemp("", "kittenbark_tgmedia_*.jpg")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	defer time.AfterFunc(time.Second*5, func() {
-		_ = thumbnail.Close()
-		_ = os.Remove(thumbnail.Name())
+	defer time.AfterFunc(time.Second, func() {
+		_ = thumbnailFile.Close()
+		_ = os.Remove(thumbnailFile.Name())
 	})
-
-	thumbnailCmd := exec.Command(
-		Ffmpeg,
-		"-y", "-i", filename,
-		"-c:v", "mjpeg",
-		"-pix_fmt", "yuvj420p",
-		"-q:v", "2",
-		"-vframes", "1",
-		thumbnail.Name(),
-	)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	thumbnailCmd.Stdout = &stdout
-	thumbnailCmd.Stderr = &stderr
-	if err := thumbnailCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to generate thumbnail: %w (stdout: %s, stderr: %s)", err, stdout.String(), stderr.String())
+	thumbnail, err := buildThumbnail(filename, thumbnailFile)
+	if err != nil {
+		return nil, err
 	}
 
 	meta, err := getFileMetadata(filename)
@@ -51,7 +39,7 @@ func Send(ctx context.Context, chatId int64, filename string, opts ...*tg.OptSen
 	}
 
 	opts = append(opts, &tg.OptSendVideo{
-		Thumbnail:         tg.FromDisk(thumbnail.Name()),
+		Thumbnail:         thumbnail,
 		Width:             meta.Width,
 		Height:            meta.Height,
 		Duration:          meta.Duration,
@@ -69,7 +57,76 @@ func SendH264(ctx context.Context, chatId int64, filename string, opts ...*tg.Op
 		_ = converted.Close()
 		_ = os.Remove(converted.Name())
 	})
+	if err := convertH264(filename, converted); err != nil {
+		return nil, err
+	}
 
+	return Send(ctx, chatId, converted.Name(), opts...)
+}
+
+func New(filename string) (video *tg.Video, cleanup func(), err error) {
+	temporaryFiles := []string{}
+	cleanup = func() {
+		wg := &sync.WaitGroup{}
+		for _, file := range temporaryFiles {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_ = os.Remove(file)
+			}()
+		}
+	}
+
+	thumbnailFile, err := os.CreateTemp("", "kittenbark_tgmedia_*.jpg")
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer func(thumbnailFile *os.File) { _ = thumbnailFile.Close() }(thumbnailFile)
+	temporaryFiles = append(temporaryFiles, thumbnailFile.Name())
+
+	thumbnail, err := buildThumbnail(filename, thumbnailFile)
+	if err != nil {
+		defer cleanup()
+		return nil, cleanup, err
+	}
+
+	meta, err := getFileMetadata(filename)
+	if err != nil {
+		defer cleanup()
+		return nil, cleanup, fmt.Errorf("failed to get file metadata: %w", err)
+	}
+
+	return &tg.Video{
+		Media:             tg.FromDisk(filename),
+		Thumbnail:         thumbnail,
+		Width:             meta.Width,
+		Height:            meta.Height,
+		Duration:          meta.Duration,
+		SupportsStreaming: true,
+	}, cleanup, nil
+}
+
+func NewH264(filename string) (*tg.Video, func(), error) {
+	converted, err := os.CreateTemp("", "kittenbark_tgmedia_*.mp4")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	if err := convertH264(filename, converted); err != nil {
+		_ = converted.Close()
+		_ = os.Remove(converted.Name())
+		return nil, func() {}, err
+	}
+
+	video, cleanup, err := New(converted.Name())
+	wrappedCleanup := func() {
+		defer cleanup()
+		_ = converted.Close()
+		_ = os.Remove(converted.Name())
+	}
+	return video, wrappedCleanup, nil
+}
+
+func convertH264(filename string, converted *os.File) error {
 	convertCmd := exec.Command(
 		Ffmpeg,
 		"-y",
@@ -85,10 +142,9 @@ func SendH264(ctx context.Context, chatId int64, filename string, opts ...*tg.Op
 	convertCmd.Stdout = &stdout
 	convertCmd.Stderr = &stderr
 	if err := convertCmd.Run(); err != nil {
-		return nil, fmt.Errorf("failed to convert video to H264: %w (stdout: %s, stderr: %s)", err, stdout.String(), stderr.String())
+		return fmt.Errorf("failed to convert video to H264: %w (stdout: %s, stderr: %s)", err, stdout.String(), stderr.String())
 	}
-
-	return Send(ctx, chatId, converted.Name(), opts...)
+	return nil
 }
 
 type metadata struct {
@@ -128,4 +184,24 @@ func getFileMetadata(filename string) (*metadata, error) {
 		result.Height = int64(ffprobeMetadata.Streams[0].Height)
 	}
 	return result, nil
+}
+
+func buildThumbnail(filename string, thumbnail *os.File) (tg.InputFile, error) {
+	thumbnailCmd := exec.Command(
+		Ffmpeg,
+		"-y", "-i", filename,
+		"-c:v", "mjpeg",
+		"-pix_fmt", "yuvj420p",
+		"-q:v", "2",
+		"-vframes", "1",
+		thumbnail.Name(),
+	)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	thumbnailCmd.Stdout = &stdout
+	thumbnailCmd.Stderr = &stderr
+	if err := thumbnailCmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed to generate thumbnail: %w (stdout: %s, stderr: %s)", err, stdout.String(), stderr.String())
+	}
+	return tg.FromDisk(thumbnail.Name()), nil
 }
