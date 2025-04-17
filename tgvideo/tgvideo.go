@@ -194,6 +194,7 @@ func buildThumbnail(filename string, thumbnail *os.File) (tg.InputFile, error) {
 		"-pix_fmt", "yuvj420p",
 		"-q:v", "2",
 		"-vframes", "1",
+		"-vf", "scale=if(gte(iw\\,ih)\\,min(320\\,iw)\\,-2):if(lt(iw\\,ih)\\,min(320\\,ih)\\,-2)",
 		thumbnail.Name(),
 	)
 	var stdout bytes.Buffer
