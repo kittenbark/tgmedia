@@ -8,6 +8,7 @@ import (
 	"github.com/kittenbark/tg"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -20,32 +21,7 @@ var (
 )
 
 func Send(ctx context.Context, chatId int64, filename string, opts ...*tg.OptSendVideo) (*tg.Message, error) {
-	thumbnailFile, err := os.CreateTemp("", "kittenbark_tgmedia_*.jpg")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary file: %w", err)
-	}
-	defer time.AfterFunc(time.Second, func() {
-		_ = thumbnailFile.Close()
-		_ = os.Remove(thumbnailFile.Name())
-	})
-	thumbnail, err := buildThumbnail(filename, thumbnailFile)
-	if err != nil {
-		return nil, err
-	}
-
-	meta, err := getFileMetadata(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get file metadata: %w", err)
-	}
-
-	opts = append(opts, &tg.OptSendVideo{
-		Thumbnail:         thumbnail,
-		Width:             meta.Width,
-		Height:            meta.Height,
-		Duration:          meta.Duration,
-		SupportsStreaming: true,
-	})
-	return tg.SendVideo(ctx, chatId, tg.FromDisk(filename), opts...)
+	return send(ctx, chatId, filename, filename, opts...)
 }
 
 func SendH264(ctx context.Context, chatId int64, filename string, opts ...*tg.OptSendVideo) (*tg.Message, error) {
@@ -61,7 +37,7 @@ func SendH264(ctx context.Context, chatId int64, filename string, opts ...*tg.Op
 		return nil, err
 	}
 
-	return Send(ctx, chatId, converted.Name(), opts...)
+	return send(ctx, chatId, converted.Name(), filepath.Base(filename), opts...)
 }
 
 func New(filename string) (video *tg.Video, cleanup func(), err error) {
@@ -124,6 +100,35 @@ func NewH264(filename string) (*tg.Video, func(), error) {
 		_ = os.Remove(converted.Name())
 	}
 	return video, wrappedCleanup, nil
+}
+
+func send(ctx context.Context, chatId int64, filename string, name string, opts ...*tg.OptSendVideo) (*tg.Message, error) {
+	thumbnailFile, err := os.CreateTemp("", "kittenbark_tgmedia_*.jpg")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer time.AfterFunc(time.Second, func() {
+		_ = thumbnailFile.Close()
+		_ = os.Remove(thumbnailFile.Name())
+	})
+	thumbnail, err := buildThumbnail(filename, thumbnailFile)
+	if err != nil {
+		return nil, err
+	}
+
+	meta, err := getFileMetadata(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file metadata: %w", err)
+	}
+
+	opts = append(opts, &tg.OptSendVideo{
+		Thumbnail:         thumbnail,
+		Width:             meta.Width,
+		Height:            meta.Height,
+		Duration:          meta.Duration,
+		SupportsStreaming: true,
+	})
+	return tg.SendVideo(ctx, chatId, tg.FromDisk(filename, name), opts...)
 }
 
 func convertH264(filename string, converted *os.File) error {

@@ -23,8 +23,13 @@ func TestSend(t *testing.T) {
 func TestSendH264(t *testing.T) {
 	t.Parallel()
 
-	if _, err := SendH264(bot.Context(), chat, "./video.mp4"); err != nil {
+	msg, err := SendH264(bot.Context(), chat, "./video.mp4")
+	if err != nil {
 		t.Fatal(err)
+	}
+
+	if msg.Video.FileName != "video.mp4" {
+		t.Fatal(msg.Video.FileName, " != video.mp4")
 	}
 }
 
