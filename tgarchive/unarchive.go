@@ -12,7 +12,7 @@ import (
 	"io"
 	"os"
 	"path"
-	"path/filepath"
+	"strings"
 )
 
 func SendUnpacked(ctx context.Context, chatId int64, filename string, opts ...*tgdir.Opt) ([]*tg.Message, error) {
@@ -35,15 +35,17 @@ func unpack(filename string) (dir string, err error) {
 		}
 	}()
 
-	switch filepath.Ext(filename) {
-	case ".tar":
-		return dir, unpackTar(filename, dir)
-	case ".tar.gz":
+	// filepath.Ext only returns the last extension (".gz" for "x.tar.gz"), so
+	// the multi-part ".tar.gz" case must be matched by suffix, not by Ext.
+	switch {
+	case strings.HasSuffix(filename, ".tar.gz"), strings.HasSuffix(filename, ".tgz"):
 		return dir, unpackTarGz(filename, dir)
-	case ".zip":
+	case strings.HasSuffix(filename, ".tar"):
+		return dir, unpackTar(filename, dir)
+	case strings.HasSuffix(filename, ".zip"):
 		return dir, unpackZip(filename, dir)
 	default:
-		return "", errors.New("file type unsupported (.tar/.zip only)")
+		return "", errors.New("file type unsupported (.tar/.tar.gz/.zip only)")
 	}
 }
 
